@@ -1,75 +1,37 @@
-# =====================================================
-# URL Shortener — AWS CloudFormation Deployment File
-# =====================================================
-# Run this ONE command to create everything on AWS:
-#
-#   aws cloudformation create-stack \
-#     --stack-name url-shortener \
-#     --template-body file://deployment.yaml \
-#     --capabilities CAPABILITY_NAMED_IAM \
-#     --parameters \
-#       ParameterKey=GitHubOwner,ParameterValue=YOUR_GITHUB_USERNAME \
-#       ParameterKey=GitHubRepo,ParameterValue=url-shortener \
-#       ParameterKey=GitHubToken,ParameterValue=YOUR_GITHUB_TOKEN
-#
-# =====================================================
-
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "URL Shortener — ECS + Lambda + DynamoDB + CI/CD"
+Description: "URL Shortener - Lambda + ECS + DynamoDB + CI/CD"
 
-# ─────────────────────────────────────────
-# PARAMETERS — fill these in when deploying
-# ─────────────────────────────────────────
 Parameters:
 
   GitHubOwner:
     Type: String
-    Description: "Your GitHub username"
 
   GitHubRepo:
     Type: String
     Default: url-shortener
-    Description: "GitHub repository name"
 
   GitHubToken:
     Type: String
     NoEcho: true
-    Description: "GitHub personal access token"
 
   GitHubBranch:
     Type: String
     Default: main
 
-# ─────────────────────────────────────────
-# RESOURCES
-# ─────────────────────────────────────────
 Resources:
 
-  # ═══════════════════════════════════════
-  # 1. DYNAMODB TABLE
-  # Stores short_code → original_url
-  # ═══════════════════════════════════════
   UrlTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: url-shortener-table
-      BillingMode: PAY_PER_REQUEST   # No fixed cost — pay only per request
+      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: code
-          AttributeType: S           # S = String
+          AttributeType: S
       KeySchema:
         - AttributeName: code
-          KeyType: HASH              # Partition key
-      Tags:
-        - Key: Project
-          Value: url-shortener
+          KeyType: HASH
 
-  # ═══════════════════════════════════════
-  # 2. IAM ROLE FOR LAMBDA
-  # Lambdas need permission to:
-  #   - write logs to CloudWatch
-  #   - read/write to DynamoDB
-  # ═══════════════════════════════════════
   LambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -86,31 +48,24 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Allow Lambda to write logs
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "*"
-              # Allow Lambda to read and write DynamoDB
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
                   - dynamodb:GetItem
                 Resource: !GetAtt UrlTable.Arn
 
-  # ═══════════════════════════════════════
-  # 3. LAMBDA: SHORTEN
-  # Receives a URL, creates a short code,
-  # saves to DynamoDB, returns short URL
-  # ═══════════════════════════════════════
   ShortenLambda:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: url-shortener-shorten
       Runtime: python3.11
-      Handler: handler.lambda_handler    # file: handler.py, function: lambda_handler
+      Handler: handler.lambda_handler
       Role: !GetAtt LambdaRole.Arn
       Timeout: 10
       MemorySize: 128
@@ -119,16 +74,10 @@ Resources:
           TABLE_NAME: !Ref UrlTable
           BASE_URL: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
       Code:
-        # Inline placeholder — CI/CD pipeline replaces this with real code
         ZipFile: |
           def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "shorten lambda placeholder"}
+              return {"statusCode": 200, "body": "placeholder"}
 
-  # ═══════════════════════════════════════
-  # 4. LAMBDA: REDIRECT
-  # Receives a short code, looks up original
-  # URL in DynamoDB, returns 301 redirect
-  # ═══════════════════════════════════════
   RedirectLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -144,14 +93,8 @@ Resources:
       Code:
         ZipFile: |
           def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "redirect lambda placeholder"}
+              return {"statusCode": 200, "body": "placeholder"}
 
-  # ═══════════════════════════════════════
-  # 5. API GATEWAY
-  # Two routes:
-  #   POST /shorten  → ShortenLambda
-  #   GET  /{code}   → RedirectLambda
-  # ═══════════════════════════════════════
   ApiGateway:
     Type: AWS::ApiGatewayV2::Api
     Properties:
@@ -171,7 +114,6 @@ Resources:
       StageName: prod
       AutoDeploy: true
 
-  # Route: POST /shorten
   ShortenIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
@@ -187,7 +129,6 @@ Resources:
       RouteKey: "POST /shorten"
       Target: !Sub "integrations/${ShortenIntegration}"
 
-  # Route: GET /{code}
   RedirectIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
@@ -203,7 +144,6 @@ Resources:
       RouteKey: "GET /{code}"
       Target: !Sub "integrations/${RedirectIntegration}"
 
-  # Give API Gateway permission to invoke both Lambdas
   ShortenLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -220,24 +160,65 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*"
 
-  # ═══════════════════════════════════════
-  # 6. ECS — FRONTEND
-  # Runs the Flask HTML frontend in a container
-  # ═══════════════════════════════════════
-
-  # ECR repository — stores Docker image
   FrontendECR:
     Type: AWS::ECR::Repository
     Properties:
       RepositoryName: url-shortener-frontend
 
-  # ECS Cluster
-  ECSCluster:
-    Type: AWS::ECS::Cluster
+  VPC:
+    Type: AWS::EC2::VPC
     Properties:
-      ClusterName: url-shortener-cluster
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
 
-  # IAM role for ECS to pull images and write logs
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTP for ECS"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+
   ECSExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -252,13 +233,23 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
-  # Task Definition — blueprint for the frontend container
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: url-shortener-cluster
+
+  FrontendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/url-shortener
+      RetentionInDays: 7
+
   FrontendTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: url-shortener-frontend
-      Cpu: 256           # 0.25 vCPU — smallest available
-      Memory: 512        # 512 MB RAM
+      Cpu: 256
+      Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
@@ -278,80 +269,11 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: frontend
 
-  FrontendLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /ecs/url-shortener
-      RetentionInDays: 7
-
-  # ECS Service — keeps the frontend container running
-  FrontendService:
-    Type: AWS::ECS::Service
-    Properties:
-      ServiceName: url-shortener-frontend
-      Cluster: !Ref ECSCluster
-      TaskDefinition: !Ref FrontendTaskDef
-      DesiredCount: 1           # Run 1 container (enough for a project)
-      LaunchType: FARGATE
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          Subnets:
-            - !Ref PublicSubnet
-
-  # Minimal VPC so ECS has a network to run in
-  VPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsHostnames: true
-
-  PublicSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true
-
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-
-  VPCGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
-
-  RouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref RouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  SubnetRouteAssoc:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet
-      RouteTableId: !Ref RouteTable
-
-  # ═══════════════════════════════════════
-  # 7. CI/CD PIPELINE
-  # CodePipeline + CodeBuild
-  # ═══════════════════════════════════════
-
-  # S3 bucket to store build artifacts between pipeline stages
   ArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "url-shortener-artifacts-${AWS::AccountId}"
 
-  # IAM role for CodePipeline
   PipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -369,10 +291,17 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action: ["s3:*", "codebuild:*", "ecs:*", "iam:PassRole"]
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - iam:PassRole
                 Resource: "*"
 
-  # IAM role for CodeBuild
   BuildRole:
     Type: AWS::IAM::Role
     Properties:
@@ -400,12 +329,19 @@ Resources:
                   - ecr:CompleteLayerUpload
                   - ecr:PutImage
                   - lambda:UpdateFunctionCode
-                  - logs:*
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
                   - s3:GetObject
                   - s3:PutObject
+                  - s3:GetObjectVersion
+                  - ecs:CreateService
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                  - ecs:RegisterTaskDefinition
+                  - iam:PassRole
                 Resource: "*"
 
-  # CodeBuild project — runs buildspec.yml
   BuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -417,7 +353,7 @@ Resources:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/standard:7.0
-        PrivilegedMode: true            # Needed for Docker
+        PrivilegedMode: true
         EnvironmentVariables:
           - Name: AWS_ACCOUNT_ID
             Value: !Ref AWS::AccountId
@@ -425,11 +361,22 @@ Resources:
             Value: !Ref AWS::Region
           - Name: ECR_URI
             Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FrontendECR}"
+          - Name: ECS_CLUSTER
+            Value: url-shortener-cluster
+          - Name: ECS_SERVICE
+            Value: url-shortener-frontend
+          - Name: SUBNET_ID
+            Value: !Ref PublicSubnet
+          - Name: SECURITY_GROUP_ID
+            Value: !Ref ECSSecurityGroup
+          - Name: TASK_DEF_FAMILY
+            Value: url-shortener-frontend
+          - Name: EXECUTION_ROLE_ARN
+            Value: !GetAtt ECSExecutionRole.Arn
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec.yml       # Reads from your repo root
+        BuildSpec: buildspec.yml
 
-  # THE PIPELINE
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
@@ -439,8 +386,6 @@ Resources:
         Type: S3
         Location: !Ref ArtifactBucket
       Stages:
-
-        # Stage 1: Pull from GitHub
         - Name: Source
           Actions:
             - Name: GitHub
@@ -454,10 +399,10 @@ Resources:
                 Repo: !Ref GitHubRepo
                 Branch: !Ref GitHubBranch
                 OAuthToken: !Ref GitHubToken
+                PollForSourceChanges: false
               OutputArtifacts:
                 - Name: SourceCode
 
-        # Stage 2: Test + Build
         - Name: Build
           Actions:
             - Name: BuildAndTest
@@ -473,39 +418,28 @@ Resources:
               OutputArtifacts:
                 - Name: BuildOutput
 
-        # Stage 3: Deploy to ECS
-        - Name: Deploy
-          Actions:
-            - Name: DeployECS
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: ECS
-                Version: "1"
-              Configuration:
-                ClusterName: !Ref ECSCluster
-                ServiceName: url-shortener-frontend
-                FileName: imagedefinitions.json
-              InputArtifacts:
-                - Name: BuildOutput
-
-# ─────────────────────────────────────────
-# OUTPUTS — shown after stack is created
-# ─────────────────────────────────────────
 Outputs:
 
   ApiEndpoint:
-    Description: "Your API Gateway URL"
+    Description: "API Gateway URL"
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
 
   ShortenEndpoint:
-    Description: "POST to this URL to shorten a link"
+    Description: "POST here to shorten a URL"
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/shorten"
 
   DynamoTableName:
     Description: "DynamoDB table name"
     Value: !Ref UrlTable
 
-  ECRRepository:
+  ECRRepo:
     Description: "ECR repository URI"
     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FrontendECR}"
+
+  SubnetId:
+    Description: "Public subnet ID"
+    Value: !Ref PublicSubnet
+
+  SecurityGroupId:
+    Description: "ECS security group ID"
+    Value: !Ref ECSSecurityGroup

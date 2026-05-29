@@ -1,0 +1,21 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# pytest cache
+.pytest_cache/
+
+# AWS and Docker
+*.zip
+imagedefinitions.json
+
+# Windows
+Thumbs.db
+desktop.ini
