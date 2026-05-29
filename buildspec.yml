@@ -1,0 +1,63 @@
+version: 0.2
+
+phases:
+
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "Installing test dependencies..."
+      - pip install pytest boto3 requests flask
+
+  pre_build:
+    commands:
+      - echo "Running unit tests..."
+      - pytest tests/ -v
+      # If pytest exits with non-zero code, CodeBuild stops here.
+      # Nothing gets deployed if tests fail.
+      - echo "Logging into AWS ECR..."
+      # | takes input from left and give output to right
+      # left takes passowrd
+      # right one: This logs Docker into ECR. --username AWS is always AWS for ECR — hardcoded, 
+      # same for everyone. --password-stdin means "read the password from what was piped in." 
+      # $ECR_URI is the address of your ECR registry. 
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_URI
+
+  build:
+    commands:
+      - echo "Building Docker image for frontend..."
+      # docker build reads the Dockerfile inside the ./frontend folder and creates a Docker image. 
+      # -t $ECR_URI:latest gives the image a name (tag). The name includes the ECR address so 
+      # Docker knows where to push it later. latest is the tag — like a version label.
+      - docker build -t $ECR_URI:latest ./frontend
+      # Pushes the built image to ECR
+      - docker push $ECR_URI:latest
+      - echo "Packaging Lambda functions..."
+      # zip -r ../../shorten.zip . zips everything in it and 
+      # puts the zip file two levels up (in the root of the project).
+      # && cd ../.. goes back to the project root
+      - cd lambdas/shorten  && zip -r ../../shorten.zip .  && cd ../..
+      - cd lambdas/redirect && zip -r ../../redirect.zip . && cd ../..
+      - echo "Deploying Lambda code..."
+      # it tells to update the code of the existing lambda function having exact name url-shortener-shorten 
+      # with the new zip file we just created.
+      - aws lambda update-function-code --function-name url-shortener-shorten  --zip-file fileb://shorten.zip
+      - aws lambda update-function-code --function-name url-shortener-redirect --zip-file fileb://redirect.zip
+
+  post_build:
+    commands:
+      - echo "Writing image definitions for ECS deploy..."
+      - printf '[{"name":"frontend","imageUri":"%s"}]' $ECR_URI:latest > imagedefinitions.json
+      - echo "Build complete."
+
+artifacts:
+  files:
+    - imagedefinitions.json
+
+
+
+# install   → set up the language and install test tools
+# pre_build → run your tests, log into any services (ECR, etc.)
+# build     → build your app (Docker image, zip files, compiled code)
+# post_build → write any files the deploy stage needs
+# artifacts → list the files to pass to the next stage
